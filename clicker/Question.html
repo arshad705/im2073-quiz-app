@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Quiz Viewer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f4f4;
+            padding: 20px;
+        }
+
+        .question-box {
+            background: #fff;
+            padding: 20px;
+            border-radius: 10px;
+            margin: auto;
+            max-width: 600px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        .question {
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+
+        .option {
+            margin-left: 15px;
+            margin-bottom: 8px;
+        }
+
+        #nav-buttons {
+            margin-top: 20px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 14px;
+            border: none;
+            border-radius: 6px;
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            background-color: #cccccc;
+            cursor: default;
+        }
+
+        #stopBtn {
+            background-color: red;
+        }
+
+        canvas {
+            margin-top: 30px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="question-box">
+        <div id="questionText" class="question">Loading question...</div>
+        <div id="optionA" class="option"></div>
+        <div id="optionB" class="option"></div>
+        <div id="optionC" class="option"></div>
+        <div id="optionD" class="option"></div>
+
+        <div id="nav-buttons">
+            <button id="prevBtn" onclick="loadPrevious()" disabled>Previous</button>
+            <button id="nextBtn" onclick="loadNext()" disabled>Next</button>
+        </div>
+
+        <canvas id="chartCanvas" width="400" height="300"></canvas>
+
+        <div style="text-align:center; margin-top: 20px;">
+            <button onclick="startLiveUpdates()">Start</button>
+            <button id="stopBtn" onclick="stopLiveUpdates()" disabled>Stop</button>
+            <button id="checkAnswerBtn" onclick="checkAnswer()">Check Answer</button>
+        </div>
+    </div>
+
+    <script>
+        let currentId = 1;
+        let chart;
+        let chartInterval;
+
+        const questionText = document.getElementById("questionText");
+        const optionA = document.getElementById("optionA");
+        const optionB = document.getElementById("optionB");
+        const optionC = document.getElementById("optionC");
+        const optionD = document.getElementById("optionD");
+        const prevBtn = document.getElementById("prevBtn");
+        const nextBtn = document.getElementById("nextBtn");
+
+        function loadQuestion(id) {
+            stopLiveUpdates();
+
+            fetch(`http://localhost:9999/clicker/question?question_id=${id}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        questionText.textContent = "No more questions.";
+                        optionA.textContent = optionB.textContent = optionC.textContent = optionD.textContent = "";
+                        nextBtn.disabled = true;
+                        return;
+                    }
+
+                    currentId = id;
+                    questionText.textContent = `Q${data.question_id}: ${data.text}`;
+                    optionA.textContent = `A. ${data.a}`;
+                    optionB.textContent = `B. ${data.b}`;
+                    optionC.textContent = `C. ${data.c}`;
+                    optionD.textContent = `D. ${data.d}`;
+
+                    prevBtn.disabled = currentId <= 1;
+                    nextBtn.disabled = currentId >= 5;
+
+                    loadChart(currentId);
+                })
+                .catch(err => {
+                    questionText.textContent = "Failed to load question.";
+                    console.error(err);
+                });
+        }
+
+        function loadChart(questionId) {
+            console.log("Loading chart for question:", questionId);
+            fetch(`http://localhost:9999/clicker/answerStats?question_id=${questionId}`)
+                .then(response => {
+                    console.log("Response status:", response.status);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log("Received chart data:", data);
+                    const chartData = [data.A || 0, data.B || 0, data.C || 0, data.D || 0];
+                    console.log("Processed chart data:", chartData);
+
+                    if (!chart) {
+                        console.log("Creating new chart");
+                        const ctx = document.getElementById("chartCanvas").getContext("2d");
+                        chart = new Chart(ctx, {
+                            type: 'bar',
+                            data: {
+                                labels: ['A', 'B', 'C', 'D'],
+                                datasets: [{
+                                    label: 'Responses for Question',
+                                    data: chartData,
+                                    backgroundColor: '#007bff'
+                                }]
+                            },
+                            options: {
+                                scales: {
+                                    y: {
+                                        beginAtZero: true,
+                                        ticks: {
+                                            stepSize: 1
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    } else {
+                        console.log("Updating existing chart");
+                        chart.data.datasets[0].data = chartData;
+                        chart.update();
+                    }
+                })
+                .catch(err => {
+                    console.error("Chart load error:", err);
+                });
+        }
+
+        function startLiveUpdates() {
+            document.getElementById("stopBtn").disabled = false;
+            document.querySelector("button[onclick='startLiveUpdates()']").disabled = true;
+            document.getElementById("nextBtn").disabled = true;
+
+            console.log("Accepting responses...");
+            chartInterval = setInterval(() => loadChart(currentId), 2000); // Use currentId instead of hardcoding
+        }
+
+        function stopLiveUpdates() {
+            document.getElementById("stopBtn").disabled = true;
+            document.querySelector("button[onclick='startLiveUpdates()']").disabled = false;
+            document.getElementById("nextBtn").disabled = false;
+
+            console.log("Stopped accepting responses.");
+            if (chartInterval) {
+                clearInterval(chartInterval);
+                chartInterval = null;
+            }
+        }
+
+        function submitAnswer(option) {
+            console.log("Submitting answer:", option);
+
+            fetch("http://localhost:9999/clicker/submitAnswer", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded"
+                },
+                body: `user_id=testUser&question_id=${currentId}&selected_option=${option}`
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    console.log("Answer submitted successfully");
+                    loadChart(currentId); // Refresh the chart immediately
+                })
+                .catch(err => {
+                    console.error("Error submitting answer:", err);
+                });
+        }
+
+        function checkAnswer() {
+        console.log("Fetching correct answer for question:", currentId);
+
+        fetch(`http://localhost:9999/clicker/correctAnswer?question_id=${currentId}`)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.correct_option) {
+                    alert(`The correct answer is: ${data.correct_option}`);
+                } else {
+                    alert("No correct answer found for this question.");
+                }
+            })
+            .catch(err => {
+                console.error("Error fetching correct answer:", err);
+                alert("Failed to fetch the correct answer.");
+            });
+    }
+
+        function loadNext() {
+            if (document.getElementById("nextBtn").disabled) {
+                console.log("You must press Start and then Stop before proceeding to the next question.");
+                return;
+            }
+            loadQuestion(currentId + 1);
+        }
+
+        function loadPrevious() {
+            if (currentId > 1) {
+                loadQuestion(currentId - 1);
+            }
+        }
+
+        loadQuestion(currentId);
+    </script>
+</body>
+
+</html>
+<!-- End of Question.html -->
